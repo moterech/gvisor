@@ -200,3 +200,20 @@ func UmtxWake(addr uintptr, n int, shared bool) error {
 	}
 	return nil
 }
+
+// UmtxWaitUintTimeout is UmtxWaitUint with a relative timeout. It returns
+// nil on wakeup, timeout or EINTR; callers re-check their condition.
+func UmtxWaitUintTimeout(addr uintptr, val uint32, shared bool, nsec int64) error {
+	op := uintptr(UMTX_OP_WAIT_UINT_PRIVATE)
+	if shared {
+		op = UMTX_OP_WAIT_UINT
+	}
+	ts := unix.NsecToTimespec(nsec)
+	// uaddr1 = sizeof(struct timespec) selects a relative timespec in uaddr2.
+	_, _, e := unix.Syscall6(unix.SYS__UMTX_OP, addr, op, uintptr(val),
+		unsafe.Sizeof(ts), uintptr(unsafe.Pointer(&ts)), 0)
+	if e != 0 && e != unix.EINTR && e != unix.EAGAIN && e != unix.ETIMEDOUT {
+		return e
+	}
+	return nil
+}
