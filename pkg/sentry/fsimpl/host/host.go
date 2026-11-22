@@ -18,6 +18,7 @@ package host
 
 import (
 	"fmt"
+	"gvisor.dev/gvisor/pkg/hostfs"
 	"math"
 
 	"golang.org/x/sys/unix"
@@ -105,22 +106,6 @@ func (v *virtualOwner) atomicGID() uint32 {
 
 func (v *virtualOwner) atomicMode() uint32 {
 	return v.mode.Load()
-}
-
-func isEpollable(fd int) bool {
-	epollfd, err := unix.EpollCreate1(0)
-	if err != nil {
-		// This shouldn't happen. If it does, just say file doesn't support epoll.
-		return false
-	}
-	defer unix.Close(epollfd)
-
-	event := unix.EpollEvent{
-		Fd:     int32(fd),
-		Events: unix.EPOLLIN,
-	}
-	err = unix.EpollCtl(epollfd, unix.EPOLL_CTL_ADD, fd, &event)
-	return err == nil
 }
 
 // inode implements kernfs.Inode.
@@ -363,7 +348,8 @@ func NewFD(ctx context.Context, mnt *vfs.Mount, hostFD int, opts *NewFDOptions) 
 		if err != nil {
 			return nil, err
 		}
-		flags = uint32(flagsInt)
+		// Host F_GETFL flags; convert to the guest encoding.
+		flags = hostfs.OpenFlagsToLinux(flagsInt)
 	}
 
 	fileType := linux.FileMode(stat.Mode).FileType()
@@ -381,7 +367,7 @@ func NewFD(ctx context.Context, mnt *vfs.Mount, hostFD int, opts *NewFDOptions) 
 			enabled: true,
 			uid:     atomicbitops.FromUint32(uint32(opts.UID)),
 			gid:     atomicbitops.FromUint32(uint32(opts.GID)),
-			mode:    atomicbitops.FromUint32(stat.Mode),
+			mode:    atomicbitops.FromUint32(uint32(stat.Mode)),
 		}
 	}
 	i.restorable = opts.Restorable
@@ -499,8 +485,8 @@ func (i *inode) Stat(ctx context.Context, vfsfs *vfs.Filesystem, opts vfs.StatOp
 
 	// Limit our host call only to known flags.
 	mask := opts.Mask & linux.STATX_ALL
-	var s unix.Statx_t
-	err := unix.Statx(i.hostFD, "", int(unix.AT_EMPTY_PATH|opts.Sync), int(mask), &s)
+	var s hostfs.Statx_t
+	err := hostfs.Statx(i.hostFD, "", int(hostfs.AT_EMPTY_PATH|opts.Sync), int(mask), &s)
 	if linuxerr.Equals(linuxerr.ENOSYS, err) {
 		// Fallback to fstat(2), if statx(2) is not supported on the host.
 		//
@@ -626,7 +612,7 @@ func (i *inode) stat(stat *unix.Stat_t) error {
 	if i.virtualOwner.enabled {
 		stat.Uid = i.virtualOwner.atomicUID()
 		stat.Gid = i.virtualOwner.atomicGID()
-		stat.Mode = i.virtualOwner.atomicMode()
+		setStatMode(stat, i.virtualOwner.atomicMode())
 	}
 	return nil
 }
@@ -761,7 +747,10 @@ func (i *inode) Open(ctx context.Context, rp *vfs.ResolvingPath, d *kernfs.Dentr
 // Supported flags for Open.
 //
 // TODO(gvisor.dev/issue/2601): Support O_NONBLOCK by adding RWF_NOWAIT to pread/pwrite calls.
-const supportedOpenFlags = unix.O_ACCMODE | unix.O_NONBLOCK | unix.O_DSYNC | unix.O_SYNC | unix.O_APPEND
+//
+// These are guest (Linux) flags: they filter the application's open flags,
+// so they must not be host constants.
+const supportedOpenFlags = linux.O_ACCMODE | linux.O_NONBLOCK | linux.O_DSYNC | linux.O_SYNC | linux.O_APPEND
 
 func (i *inode) open(ctx context.Context, d *kernfs.Dentry, mnt *vfs.Mount, fileType linux.FileMode, flags uint32) (*vfs.FileDescription, error) {
 	flags &= supportedOpenFlags
@@ -907,7 +896,7 @@ func (f *fileDescription) Allocate(ctx context.Context, mode, offset, length uin
 	if f.inode.readonly {
 		return linuxerr.EPERM
 	}
-	return unix.Fallocate(f.inode.hostFD, uint32(mode), int64(offset), int64(length))
+	return hostfs.Fallocate(f.inode.hostFD, uint32(mode), int64(offset), int64(length))
 }
 
 // PRead implements vfs.FileDescriptionImpl.PRead.
@@ -1053,7 +1042,7 @@ func (f *fileDescription) writeToHostFD(ctx context.Context, src usermem.IOSeque
 				return int64(n), syncErr
 			}
 		} else if statusFlags&linux.O_DSYNC != 0 {
-			if syncErr := unix.Fdatasync(hostFD); syncErr != nil {
+			if syncErr := hostfs.Fdatasync(hostFD); syncErr != nil {
 				return int64(n), syncErr
 			}
 		}
@@ -1134,7 +1123,7 @@ func (f *fileDescription) Sync(ctx context.Context, opts vfs.SyncOptions) error 
 		return linuxerr.EPERM
 	}
 	if opts.DataOnly {
-		return unix.Fdatasync(f.inode.hostFD)
+		return hostfs.Fdatasync(f.inode.hostFD)
 	}
 	return unix.Fsync(f.inode.hostFD)
 }
@@ -1260,8 +1249,8 @@ var hostEventFdDeviceOnce sync.Once
 // given host device id.
 func isHostEventFdDevice(dev uint64) bool {
 	hostEventFdDeviceOnce.Do(func() {
-		efd, _, err := unix.RawSyscall(unix.SYS_EVENTFD2, 0, 0, 0)
-		if err != 0 {
+		efd, err := newDummyEventfd()
+		if err != nil {
 			log.Warningf("failed to create dummy eventfd: %v. Importing eventfds will fail", error(err))
 			return
 		}

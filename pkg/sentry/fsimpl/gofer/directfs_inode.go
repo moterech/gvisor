@@ -17,6 +17,7 @@ package gofer
 import (
 	"bytes"
 	"fmt"
+	"gvisor.dev/gvisor/pkg/hostfs"
 	"math"
 	"path"
 	"path/filepath"
@@ -68,7 +69,7 @@ func reopenFD(hostFD int, flags int) (int, error) {
 func tryOpen(open func(int) (int, error)) (int, error) {
 	flags := []int{
 		unix.O_RDONLY | unix.O_NONBLOCK,
-		unix.O_PATH,
+		hostfs.O_PATH,
 	}
 
 	var (
@@ -138,8 +139,8 @@ type directfsInode struct {
 //
 // newDirectfsDentry takes ownership of controlFD
 func (fs *filesystem) newDirectfsDentry(controlFD int) (*dentry, error) {
-	var stat unix.Statx_t
-	if err := unix.Statx(controlFD, "", unix.AT_EMPTY_PATH, unix.STATX_BASIC_STATS|unix.STATX_BTIME, &stat); err != nil {
+	var stat hostfs.Statx_t
+	if err := hostfs.Statx(controlFD, "", hostfs.AT_EMPTY_PATH, linux.STATX_BASIC_STATS|linux.STATX_BTIME, &stat); err != nil {
 		log.Warningf("failed to stat FD %d: %v", controlFD, err)
 		_ = unix.Close(controlFD)
 		return nil, err
@@ -349,8 +350,8 @@ func (i *directfsInode) updateMetadataLocked(h handle) error {
 		}
 	}
 
-	var stat unix.Statx_t
-	err := unix.Statx(int(h.fd), "", unix.AT_EMPTY_PATH, unix.STATX_BASIC_STATS|unix.STATX_BTIME, &stat)
+	var stat hostfs.Statx_t
+	err := hostfs.Statx(int(h.fd), "", hostfs.AT_EMPTY_PATH, linux.STATX_BASIC_STATS|linux.STATX_BTIME, &stat)
 	if handleMuRLocked {
 		// handleMu must be released before updateMetadataFromStatxLocked().
 		i.handleMu.RUnlock() // +checklocksforce: complex case.
@@ -365,7 +366,7 @@ func (i *directfsInode) updateMetadataLocked(h handle) error {
 // updateMetadataFromStatxLocked is called to update d's metadata after an update
 // from the remote filesystem.
 // +checklocks:i.inode.metadataMu
-func (i *directfsInode) updateMetadataFromStatxLocked(stat *unix.Statx_t) {
+func (i *directfsInode) updateMetadataFromStatxLocked(stat *hostfs.Statx_t) {
 	if got, want := uint32(stat.Mode)&unix.S_IFMT, i.inode.fileType(); got != want {
 		panic(fmt.Sprintf("directfsInode file type changed from %#o to %#o", want, got))
 	}
@@ -430,11 +431,11 @@ func (i *directfsInode) utimensat(stat *linux.Statx) error {
 		{Sec: 0, Nsec: unix.UTIME_OMIT},
 		{Sec: 0, Nsec: unix.UTIME_OMIT},
 	}
-	if stat.Mask&unix.STATX_ATIME != 0 {
+	if stat.Mask&linux.STATX_ATIME != 0 {
 		utimes[0].Sec = stat.Atime.Sec
 		utimes[0].Nsec = int64(stat.Atime.Nsec)
 	}
-	if stat.Mask&unix.STATX_MTIME != 0 {
+	if stat.Mask&linux.STATX_MTIME != 0 {
 		utimes[1].Sec = stat.Mtime.Sec
 		utimes[1].Nsec = int64(stat.Mtime.Nsec)
 	}
@@ -457,8 +458,8 @@ func (i *directfsInode) utimensat(stat *linux.Statx) error {
 }
 
 func (i *directfsInode) prepareSetStat(ctx context.Context, stat *linux.Statx, d *dentry) error {
-	if stat.Mask&unix.STATX_SIZE != 0 ||
-		(stat.Mask&(unix.STATX_ATIME|unix.STATX_MTIME) != 0 && i.isRegularFile()) {
+	if stat.Mask&linux.STATX_SIZE != 0 ||
+		(stat.Mask&(linux.STATX_ATIME|linux.STATX_MTIME) != 0 && i.isRegularFile()) {
 		// Need to ensure a writable FD is available. See setStatLocked() to
 		// understand why.
 		return d.ensureSharedHandle(ctx, false /* read */, true /* write */, false /* trunc */)
@@ -468,37 +469,37 @@ func (i *directfsInode) prepareSetStat(ctx context.Context, stat *linux.Statx, d
 
 // Precondition: i.handleMu is locked.
 func (i *directfsInode) setStatLocked(stat *linux.Statx) (failureMask uint32, failureErr error) {
-	if stat.Mask&unix.STATX_MODE != 0 {
+	if stat.Mask&linux.STATX_MODE != 0 {
 		if err := i.chmod(stat.Mode &^ unix.S_IFMT); err != nil {
-			failureMask |= unix.STATX_MODE
+			failureMask |= linux.STATX_MODE
 			failureErr = err
 		}
 	}
 
-	if stat.Mask&unix.STATX_SIZE != 0 {
+	if stat.Mask&linux.STATX_SIZE != 0 {
 		// ftruncate(2) requires a writable FD.
 		if err := unix.Ftruncate(int(i.writeFD.RacyLoad()), int64(stat.Size)); err != nil {
-			failureMask |= unix.STATX_SIZE
+			failureMask |= linux.STATX_SIZE
 			failureErr = err
 		}
 	}
 
 	if err := i.utimensat(stat); err != nil {
-		failureMask |= (stat.Mask & (unix.STATX_ATIME | unix.STATX_MTIME))
+		failureMask |= (stat.Mask & (linux.STATX_ATIME | linux.STATX_MTIME))
 		failureErr = err
 	}
 
-	if stat.Mask&(unix.STATX_UID|unix.STATX_GID) != 0 {
+	if stat.Mask&(linux.STATX_UID|linux.STATX_GID) != 0 {
 		uid := auth.KUID(auth.NoID)
-		if stat.Mask&unix.STATX_UID != 0 {
+		if stat.Mask&linux.STATX_UID != 0 {
 			uid = auth.KUID(stat.UID)
 		}
 		gid := auth.KGID(auth.NoID)
-		if stat.Mask&unix.STATX_GID != 0 {
+		if stat.Mask&linux.STATX_GID != 0 {
 			gid = auth.KGID(stat.GID)
 		}
 		if err := fchown(i.controlFD, uid, gid); err != nil {
-			failureMask |= stat.Mask & (unix.STATX_UID | unix.STATX_GID)
+			failureMask |= stat.Mask & (linux.STATX_UID | linux.STATX_GID)
 			failureErr = err
 		}
 	}
@@ -519,7 +520,7 @@ func fchown(fd int, uid auth.KUID, gid auth.KGID) error {
 	if gid.Ok() {
 		g = int(gid)
 	}
-	return unix.Fchownat(fd, "", u, g, unix.AT_EMPTY_PATH|unix.AT_SYMLINK_NOFOLLOW)
+	return unix.Fchownat(fd, "", u, g, hostfs.AT_EMPTY_PATH|unix.AT_SYMLINK_NOFOLLOW)
 }
 
 // Precondition: i.handleMu must be locked.
@@ -836,28 +837,15 @@ func (i *directfsInode) readlink() (string, error) {
 }
 
 func (i *directfsInode) statfs() (linux.Statfs, error) {
-	var statFS unix.Statfs_t
-	if err := unix.Fstatfs(i.controlFD, &statFS); err != nil {
-		return linux.Statfs{}, err
-	}
-	return linux.Statfs{
-		BlockSize:       statFS.Bsize,
-		FragmentSize:    statFS.Bsize,
-		Blocks:          statFS.Blocks,
-		BlocksFree:      statFS.Bfree,
-		BlocksAvailable: statFS.Bavail,
-		Files:           statFS.Files,
-		FilesFree:       statFS.Ffree,
-		NameLength:      uint64(statFS.Namelen),
-	}, nil
+	return hostfs.Fstatfs(i.controlFD)
 }
 
 func (i *directfsInode) restoreFile(ctx context.Context, controlFD int, opts *vfs.CompleteRestoreOptions, d *dentry) error {
 	if controlFD < 0 {
 		return fmt.Errorf("directfsInode.restoreFile called with invalid controlFD")
 	}
-	var stat unix.Statx_t
-	if err := unix.Statx(controlFD, "", unix.AT_EMPTY_PATH, unix.STATX_BASIC_STATS|unix.STATX_BTIME, &stat); err != nil {
+	var stat hostfs.Statx_t
+	if err := hostfs.Statx(controlFD, "", hostfs.AT_EMPTY_PATH, linux.STATX_BASIC_STATS|linux.STATX_BTIME, &stat); err != nil {
 		_ = unix.Close(controlFD)
 		return fmt.Errorf("failed to stat %q in mount %q: %w", genericDebugPathname(i.fs, d), i.fs.iopts.UniqueID, err)
 	}
@@ -912,10 +900,10 @@ func doRevalidationDirectfs(ctx context.Context, vfsObj *vfs.VirtualFilesystem, 
 
 	parent := start
 	for _, d := range state.dentries {
-		var stat unix.Statx_t
+		var stat hostfs.Statx_t
 		// Lock metadata *before* getting attributes for d.
 		d.inode.metadataMu.Lock()
-		err := unix.Statx(parent.controlFD, d.name, unix.AT_SYMLINK_NOFOLLOW|unix.AT_NO_AUTOMOUNT, unix.STATX_BASIC_STATS|unix.STATX_BTIME, &stat)
+		err := hostfs.Statx(parent.controlFD, d.name, unix.AT_SYMLINK_NOFOLLOW|hostfs.AT_NO_AUTOMOUNT, linux.STATX_BASIC_STATS|linux.STATX_BTIME, &stat)
 		if err != nil && err != unix.ENOENT {
 			d.inode.metadataMu.Unlock()
 			return err

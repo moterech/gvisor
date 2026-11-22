@@ -75,31 +75,6 @@ func blockUntilNonblockingPipeHasWriter(ctx context.Context, fd int32) error {
 	}
 }
 
-func nonblockingPipeHasWriter(fd int32) (bool, error) {
-	tempPipeMu.Lock()
-	defer tempPipeMu.Unlock()
-	// Copy 1 byte from fd into the temporary pipe.
-	n, err := unix.Tee(int(fd), tempPipeWriteFD, 1, unix.SPLICE_F_NONBLOCK)
-	if linuxerr.Equals(linuxerr.EAGAIN, err) {
-		// The pipe represented by fd is empty, but has a writer.
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if n == 0 {
-		// The pipe represented by fd is empty and has no writer.
-		return false, nil
-	}
-	// The pipe represented by fd is non-empty, so it either has, or has
-	// previously had, a writer. Remove the byte copied to the temporary pipe
-	// before returning.
-	if n, err := unix.Read(tempPipeReadFD, tempPipeBuf[:]); err != nil || n != 1 {
-		panic(fmt.Sprintf("failed to drain pipe for gofer.blockUntilNonblockingPipeHasWriter: got (%d, %v), wanted (1, nil)", n, err))
-	}
-	return true, nil
-}
-
 func sleepBetweenNamedPipeOpenChecks(ctx context.Context) error {
 	var q waiter.NeverReady
 	left, ok := ctx.BlockWithTimeoutOn(&q, waiter.EventIn, 100*time.Millisecond)

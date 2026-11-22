@@ -39,6 +39,8 @@ import (
 	"gvisor.dev/gvisor/pkg/eventfd"
 	"gvisor.dev/gvisor/pkg/fdnotifier"
 	"gvisor.dev/gvisor/pkg/flipcall"
+	"gvisor.dev/gvisor/pkg/fsutil"
+	"gvisor.dev/gvisor/pkg/hostfs"
 	"gvisor.dev/gvisor/pkg/hostsyscall"
 	"gvisor.dev/gvisor/pkg/memutil"
 	"gvisor.dev/gvisor/pkg/safecopy"
@@ -402,5 +404,150 @@ func TestUnetPassFD(t *testing.T) {
 	got := make([]byte, 5)
 	if _, err := unix.Pread(fds[0], got, 0); err != nil || string(got) != "hello" {
 		t.Errorf("passed fd reads %q (%v), want hello", got, err)
+	}
+}
+
+// hostfs.Statx emulated with fstatat: AT_EMPTY_PATH on an fd, symlink
+// no-follow, birthtime, and Linux-encoded mask.
+func TestHostfsStatx(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "f")
+	if err := os.WriteFile(p, []byte("hello"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("f", filepath.Join(dir, "l")); err != nil {
+		t.Fatal(err)
+	}
+	fd, err := unix.Open(p, unix.O_RDONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(fd)
+
+	var st hostfs.Statx_t
+	if err := hostfs.Statx(fd, "", hostfs.AT_EMPTY_PATH, linux.STATX_BASIC_STATS|linux.STATX_BTIME, &st); err != nil {
+		t.Fatalf("Statx(AT_EMPTY_PATH): %v", err)
+	}
+	var ref unix.Stat_t
+	unix.Fstat(fd, &ref)
+	if st.Size != 5 || st.Mode != ref.Mode || st.Ino != ref.Ino || st.Nlink != 1 {
+		t.Errorf("statx = size %d mode %o ino %d nlink %d; want 5 %o %d 1", st.Size, st.Mode, st.Ino, st.Nlink, ref.Mode, ref.Ino)
+	}
+	if st.Mask&(linux.STATX_BASIC_STATS|linux.STATX_BTIME) != linux.STATX_BASIC_STATS|linux.STATX_BTIME {
+		t.Errorf("mask %#x lacks BASIC_STATS|BTIME", st.Mask)
+	}
+	if st.Btime.Sec == 0 {
+		t.Errorf("birthtime not filled")
+	}
+	if uint64(st.Dev_major)<<8|uint64(st.Dev_minor) == 0 && ref.Dev != 0 {
+		t.Errorf("dev not filled: %d:%d (host %#x)", st.Dev_major, st.Dev_minor, ref.Dev)
+	}
+
+	dfd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(dfd)
+	if err := hostfs.Statx(dfd, "l", unix.AT_SYMLINK_NOFOLLOW, linux.STATX_BASIC_STATS, &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFLNK {
+		t.Errorf("AT_SYMLINK_NOFOLLOW: mode %o, want symlink", st.Mode)
+	}
+	if err := hostfs.Statx(dfd, "l", 0, linux.STATX_BASIC_STATS, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFREG {
+		t.Errorf("follow: mode %o err %v, want regular", st.Mode, err)
+	}
+}
+
+func TestHostfsFallocateAndStatfs(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "falloc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	fd := int(f.Fd())
+	if err := hostfs.Fallocate(fd, 0, 0, 1<<20); err != nil && !errors.Is(err, unix.EOPNOTSUPP) && !errors.Is(err, unix.EINVAL) {
+		t.Fatalf("Fallocate(0): %v", err)
+	} else if err != nil {
+		t.Logf("posix_fallocate unsupported on this filesystem: %v", err)
+	}
+	if err := hostfs.Fallocate(fd, 0x8 /* COLLAPSE_RANGE */, 0, 4096); !errors.Is(err, unix.EOPNOTSUPP) {
+		t.Errorf("unsupported mode: %v, want EOPNOTSUPP", err)
+	}
+	if err := hostfs.Fdatasync(fd); err != nil {
+		t.Errorf("Fdatasync: %v", err)
+	}
+	s, err := hostfs.Fstatfs(fd)
+	if err != nil || s.BlockSize == 0 || s.Blocks == 0 || s.NameLength == 0 {
+		t.Errorf("Fstatfs = %+v, %v", s, err)
+	}
+}
+
+// Host F_GETFL flags must reach the guest in Linux encoding.
+func TestHostfsOpenFlagsToLinux(t *testing.T) {
+	got := hostfs.OpenFlagsToLinux(unix.O_RDWR | unix.O_NONBLOCK | unix.O_APPEND)
+	want := uint32(linux.O_RDWR | linux.O_NONBLOCK | linux.O_APPEND)
+	if got != want {
+		t.Errorf("OpenFlagsToLinux = %#x, want %#x", got, want)
+	}
+}
+
+// getdirentries(2) buffers parsed by the shared fsutil.ParseDirents.
+func TestFsutilDirentsAndRename(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{"a", "bb", "ccc"} {
+		os.WriteFile(filepath.Join(dir, n), nil, 0600)
+	}
+	os.Mkdir(filepath.Join(dir, "sub"), 0700)
+	dfd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(dfd)
+
+	buf := make([]byte, 8192)
+	var base uintptr
+	n, err := unix.Getdirentries(dfd, buf, &base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]uint8{}
+	fsutil.ParseDirents(buf[:n], func(ino uint64, off int64, ftype uint8, name string, reclen uint16) {
+		if ino == 0 {
+			t.Errorf("%s: ino 0", name)
+		}
+		seen[name] = ftype
+	})
+	if len(seen) != 4 || seen["sub"] != linux.DT_DIR || seen["ccc"] != linux.DT_REG {
+		t.Errorf("dirents = %v", seen)
+	}
+
+	if err := fsutil.RenameAt2(dfd, "a", dfd, "bb", 1 /* RENAME_NOREPLACE */); !errors.Is(err, unix.EEXIST) {
+		t.Errorf("rename NOREPLACE onto existing: %v, want EEXIST", err)
+	}
+	if err := fsutil.RenameAt2(dfd, "a", dfd, "z", 1); err != nil {
+		t.Errorf("rename NOREPLACE: %v", err)
+	}
+	if err := fsutil.RenameAt2(dfd, "z", dfd, "bb", 2 /* RENAME_EXCHANGE */); !errors.Is(err, unix.EINVAL) {
+		t.Errorf("RENAME_EXCHANGE: %v, want EINVAL", err)
+	}
+	st, err := fsutil.StatAt(dfd, "z")
+	if err != nil || st.Mode&unix.S_IFMT != unix.S_IFREG {
+		t.Errorf("StatAt(z) = %o, %v", st.Mode, err)
+	}
+}
+
+// FIONREAD on FreeBSD is 0x4004667f (Linux 0x541b).
+func TestFionread(t *testing.T) {
+	var p [2]int
+	if err := unix.Pipe(p[:]); err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(p[0])
+	defer unix.Close(p[1])
+	unix.Write(p[1], []byte("12345"))
+	var n int32
+	if _, _, e := unix.Syscall(unix.SYS_IOCTL, uintptr(p[0]), bsdsys.FIONREAD, uintptr(unsafe.Pointer(&n))); e != 0 || n != 5 {
+		t.Errorf("FIONREAD = %d, %v; want 5", n, e)
 	}
 }

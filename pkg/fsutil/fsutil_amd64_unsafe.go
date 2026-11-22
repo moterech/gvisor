@@ -36,7 +36,7 @@ func StatAt(dirFd int, name string) (unix.Stat_t, error) {
 	statPtr := unsafe.Pointer(&stat)
 
 	if _, _, errno := unix.Syscall6(
-		unix.SYS_NEWFSTATAT,
+		sysFstatat,
 		uintptr(dirFd),
 		uintptr(namePtr),
 		uintptr(statPtr),

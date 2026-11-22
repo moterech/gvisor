@@ -31,8 +31,10 @@ import (
 )
 
 const (
-	allowedOpenFlags     = unix.O_ACCMODE | unix.O_TRUNC
-	setStatSupportedMask = unix.STATX_MODE | unix.STATX_UID | unix.STATX_GID | unix.STATX_SIZE | unix.STATX_ATIME | unix.STATX_MTIME
+	allowedOpenFlags = unix.O_ACCMODE | unix.O_TRUNC
+	// setStatSupportedMask is in Linux statx(2) mask encoding, the encoding
+	// of linux.Statx on the wire (not necessarily the host's).
+	setStatSupportedMask = linux.STATX_MODE | linux.STATX_UID | linux.STATX_GID | linux.STATX_SIZE | linux.STATX_ATIME | linux.STATX_MTIME
 	// unixDirentMaxSize is the maximum size of unix.Dirent for amd64.
 	unixDirentMaxSize = 280
 )

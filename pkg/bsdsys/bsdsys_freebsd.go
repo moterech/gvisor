@@ -92,6 +92,9 @@ const (
 	MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED = 0x10
 )
 
+// ioctl requests missing from x/sys/unix (<sys/filio.h>).
+const FIONREAD = 0x4004667f
+
 // Signal and poll details that differ from Linux.
 const (
 	// SI_USER is the lowest si_code of a user-generated signal; codes

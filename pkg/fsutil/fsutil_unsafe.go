@@ -74,8 +74,11 @@ func RenameAt2(oldDirFD int, oldName string, newDirFD int, newName string, flags
 		newNamePtr = unsafe.Pointer(nameBytes)
 	}
 
+	if flags&^supportedRenameFlags != 0 {
+		return unix.EINVAL
+	}
 	if _, _, errno := unix.Syscall6(
-		unix.SYS_RENAMEAT2,
+		sysRenameat2,
 		uintptr(oldDirFD),
 		uintptr(oldNamePtr),
 		uintptr(newDirFD),
@@ -111,6 +114,6 @@ func ParseDirents(buf []byte, handleDirent DirentHandler) {
 		}
 
 		// Deliver results to caller.
-		handleDirent(dirent.Ino, dirent.Off, dirent.Type, name, dirent.Reclen)
+		handleDirent(direntIno(&dirent), dirent.Off, dirent.Type, name, dirent.Reclen)
 	}
 }

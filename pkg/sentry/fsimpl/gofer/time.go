@@ -15,7 +15,7 @@
 package gofer
 
 import (
-	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/hostfs"
 	"gvisor.dev/gvisor/pkg/lisafs"
 	"gvisor.dev/gvisor/pkg/sentry/vfs"
 )
@@ -24,7 +24,7 @@ func dentryTimestamp(t lisafs.StatxTimestamp) int64 {
 	return t.ToNsec()
 }
 
-func dentryTimestampFromUnix(t unix.StatxTimestamp) int64 {
+func dentryTimestampFromUnix(t hostfs.StatxTimestamp) int64 {
 	return dentryTimestamp(lisafs.StatxTimestamp{Sec: t.Sec, Nsec: t.Nsec})
 }
 

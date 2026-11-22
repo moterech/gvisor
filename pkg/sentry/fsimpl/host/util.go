@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/errors/linuxerr"
+	"gvisor.dev/gvisor/pkg/hostfs"
 )
 
 func toTimespec(ts linux.StatxTimestamp, omit bool) unix.Timespec {
@@ -33,7 +34,7 @@ func toTimespec(ts linux.StatxTimestamp, omit bool) unix.Timespec {
 	}
 }
 
-func unixToLinuxStatxTimestamp(ts unix.StatxTimestamp) linux.StatxTimestamp {
+func unixToLinuxStatxTimestamp(ts hostfs.StatxTimestamp) linux.StatxTimestamp {
 	return linux.StatxTimestamp{Sec: ts.Sec, Nsec: ts.Nsec}
 }
 

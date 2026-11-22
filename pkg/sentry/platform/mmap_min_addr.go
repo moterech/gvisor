@@ -15,16 +15,10 @@
 package platform
 
 import (
-	"fmt"
-	"os"
-	"strconv"
-	"strings"
-
 	"gvisor.dev/gvisor/pkg/hostarch"
 )
 
 // systemMMapMinAddrSource is the source file.
-const systemMMapMinAddrSource = "/proc/sys/vm/mmap_min_addr"
 
 // systemMMapMinAddr is the system's minimum map address.
 var systemMMapMinAddr uint64
@@ -46,18 +40,7 @@ func (*MMapMinAddr) MinUserAddress() hostarch.Addr {
 }
 
 func init() {
-	// Open the source file.
-	b, err := os.ReadFile(systemMMapMinAddrSource)
-	if err != nil {
-		panic(fmt.Sprintf("couldn't open %s: %v", systemMMapMinAddrSource, err))
-	}
-
-	// Parse the result.
-	hostMMapMinAddr, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
-	if err != nil {
-		panic(fmt.Sprintf("couldn't parse %s from %s: %v", string(b), systemMMapMinAddrSource, err))
-	}
-	systemMMapMinAddr = pageRoundUpMMapMinAddr(hostMMapMinAddr)
+	systemMMapMinAddr = pageRoundUpMMapMinAddr(hostMMapMinAddr())
 }
 
 // pageRoundUpMMapMinAddr returns addr rounded up to a page boundary, the lowest

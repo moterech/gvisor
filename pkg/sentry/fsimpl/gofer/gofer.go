@@ -44,6 +44,7 @@ package gofer
 
 import (
 	"fmt"
+	"gvisor.dev/gvisor/pkg/hostfs"
 	"path"
 	"strconv"
 	"strings"
@@ -917,7 +918,7 @@ func inoKeyFromStatx(stat *lisafs.Statx) inoKey {
 	}
 }
 
-func inoKeyFromUnixStatx(stat *unix.Statx_t) inoKey {
+func inoKeyFromUnixStatx(stat *hostfs.Statx_t) inoKey {
 	return inoKey{
 		ino:      stat.Ino,
 		devMinor: stat.Dev_minor,
@@ -1449,9 +1450,9 @@ func (d *dentry) refreshSizeLocked(ctx context.Context) error {
 	}
 
 	// Using statx(2) with a minimal mask is faster than fstat(2).
-	var stat unix.Statx_t
+	var stat hostfs.Statx_t
 	// Can use RacyLoad() because handleMu is locked.
-	err := unix.Statx(int(d.inode.writeFD.RacyLoad()), "", unix.AT_EMPTY_PATH, unix.STATX_SIZE, &stat)
+	err := hostfs.Statx(int(d.inode.writeFD.RacyLoad()), "", hostfs.AT_EMPTY_PATH, linux.STATX_SIZE, &stat)
 	d.inode.handleMu.RUnlock() // must be released before updateSizeLocked()
 	if err != nil {
 		return err

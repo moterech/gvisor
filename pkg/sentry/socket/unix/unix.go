@@ -773,7 +773,7 @@ func (s *Socket) RecvMsg(t *kernel.Task, dst usermem.IOSequence, flags int, have
 		if !wantCreds {
 			msgFlags |= linux.MSG_CTRUNC
 		}
-		credLen := unix.CmsgSpace(unix.SizeofUcred)
+		credLen := linuxCmsgSpace(linux.SizeOfControlMessageCredentials)
 		rightsLen -= credLen
 	}
 	// FDs are 32 bit (4 byte) ints.
@@ -938,4 +938,13 @@ func convertAddress(addr transport.Address) (linux.SockAddr, uint32) {
 
 func init() {
 	socket.RegisterProvider(linux.AF_UNIX, &provider{})
+}
+
+// linuxCmsgSpace is CMSG_SPACE(dataLen) in the guest (64-bit Linux) ABI:
+// header and data each aligned to 8 bytes. It must not use the host's
+// unix.CmsgSpace, whose layout differs on non-Linux hosts.
+func linuxCmsgSpace(dataLen int) int {
+	const align = 8
+	alignUp := func(n int) int { return (n + align - 1) &^ (align - 1) }
+	return alignUp(linux.SizeOfControlMessageHeader) + alignUp(dataLen)
 }
