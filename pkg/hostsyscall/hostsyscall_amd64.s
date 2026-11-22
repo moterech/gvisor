@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build linux
+
 #include "textflag.h"
 
 // func RawSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, errno)

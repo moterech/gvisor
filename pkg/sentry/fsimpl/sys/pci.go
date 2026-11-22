@@ -432,7 +432,7 @@ func pciDeviceName(pciDevicePath string) (string, error) {
 }
 
 func hostFileMode(path string) (uint32, error) {
-	fd, err := unix.Openat(-1, path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_PATH, 0)
+	fd, err := unix.Openat(-1, path, unix.O_RDONLY|unix.O_NOFOLLOW|oPath, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -441,7 +441,7 @@ func hostFileMode(path string) (uint32, error) {
 	if err := unix.Fstat(fd, &stat); err != nil {
 		return 0, err
 	}
-	return stat.Mode & unix.S_IFMT, nil
+	return uint32(stat.Mode) & unix.S_IFMT, nil
 }
 
 func hostDirEntries(path string) ([]string, error) {

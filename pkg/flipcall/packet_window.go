@@ -85,7 +85,7 @@ func (pwa *PacketWindowAllocator) Init() error {
 	// Apply F_SEAL_SHRINK to prevent either party from causing SIGBUS in the
 	// other by truncating the file, and F_SEAL_SEAL to prevent either party
 	// from applying F_SEAL_GROW or F_SEAL_WRITE.
-	if _, _, e := unix.RawSyscall(unix.SYS_FCNTL, uintptr(fd), linux.F_ADD_SEALS, linux.F_SEAL_SHRINK|linux.F_SEAL_SEAL); e != 0 {
+	if e := memutil.AddSeals(fd, linux.F_SEAL_SHRINK|linux.F_SEAL_SEAL); e != nil {
 		unix.Close(fd)
 		return fmt.Errorf("failed to apply memfd seals: %v", e)
 	}

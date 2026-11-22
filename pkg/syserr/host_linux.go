@@ -93,3 +93,11 @@ var (
 	ErrRFKill                    = newWithHost("operation not possible due to RF-kill", errno.ERFKILL, unix.ERFKILL)
 	ErrHwPoison                  = newWithHost("memory page has hardware error", errno.EHWPOISON, unix.EHWPOISON)
 )
+
+// STREAMS errnos, which not every host defines; see host_freebsd.go.
+const (
+	hostENOSTR  = unix.ENOSTR
+	hostENODATA = unix.ENODATA
+	hostETIME   = unix.ETIME
+	hostENOSR   = unix.ENOSR
+)

@@ -150,13 +150,13 @@ func (q *GoQueue) workerMain() {
 			var sysno uintptr
 			switch r.Op {
 			case OpRead:
-				sysno = unix.SYS_PREAD64
+				sysno = sysPread
 			case OpWrite:
-				sysno = unix.SYS_PWRITE64
+				sysno = sysPwrite
 			case OpReadv:
-				sysno = unix.SYS_PREADV2
+				sysno = sysPreadv
 			case OpWritev:
-				sysno = unix.SYS_PWRITEV2
+				sysno = sysPwritev
 			default:
 				panic(fmt.Sprintf("unknown op %v", r.Op))
 			}

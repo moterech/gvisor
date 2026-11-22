@@ -101,12 +101,12 @@ func (r *SocketReader) ReadVec(bufs [][]byte) (int, error) {
 
 	if len(r.ControlMessage) != 0 {
 		msg.Control = &r.ControlMessage[0]
-		msg.Controllen = uint64(len(r.ControlMessage))
+		msg.SetControllen(len(r.ControlMessage))
 	}
 
 	if len(iovecs) != 0 {
 		msg.Iov = &iovecs[0]
-		msg.Iovlen = uint64(len(iovecs))
+		msg.SetIovlen(len(iovecs))
 	}
 
 	// n is the bytes received.
@@ -150,7 +150,7 @@ func (r *SocketReader) ReadVec(bufs [][]byte) (int, error) {
 
 	r.socket.gate.Leave()
 
-	if msg.Controllen < uint64(len(r.ControlMessage)) {
+	if uint64(msg.Controllen) < uint64(len(r.ControlMessage)) {
 		r.ControlMessage = r.ControlMessage[:msg.Controllen]
 	}
 
@@ -197,12 +197,12 @@ func (w *SocketWriter) WriteVec(bufs [][]byte) (int, error) {
 
 	if len(w.ControlMessage) != 0 {
 		msg.Control = &w.ControlMessage[0]
-		msg.Controllen = uint64(len(w.ControlMessage))
+		msg.SetControllen(len(w.ControlMessage))
 	}
 
 	if len(iovecs) > 0 {
 		msg.Iov = &iovecs[0]
-		msg.Iovlen = uint64(len(iovecs))
+		msg.SetIovlen(len(iovecs))
 	}
 
 	fd, ok := w.socket.enterFD()

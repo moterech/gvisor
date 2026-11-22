@@ -222,7 +222,7 @@ func (r *remote) write(msg proto.Message, msgType pb.MessageType) {
 
 	backoff := r.initialBackoff
 	for i := 0; ; i++ {
-		_, err := unix.Writev(r.endpoint.FD(), [][]byte{hdrOut[:], out})
+		_, err := writev(r.endpoint.FD(), [][]byte{hdrOut[:], out})
 		if err == nil {
 			// Write succeeded, we're done!
 			return

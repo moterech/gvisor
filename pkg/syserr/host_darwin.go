@@ -42,3 +42,11 @@ func addHostTranslation(host unix.Errno, trans *Error) {
 	}
 	darwinHostTranslations[host] = trans
 }
+
+// STREAMS errnos, which not every host defines; see host_freebsd.go.
+const (
+	hostENOSTR  = unix.ENOSTR
+	hostENODATA = unix.ENODATA
+	hostETIME   = unix.ETIME
+	hostENOSR   = unix.ENOSR
+)

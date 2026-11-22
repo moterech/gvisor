@@ -989,7 +989,7 @@ func (f *MemoryFile) extendChunksLocked(alloc *allocState) error {
 func (f *MemoryFile) madviseChunkMapping(addr, len uintptr, huge bool) {
 	if huge {
 		if f.opts.AdviseHugepage {
-			_, _, errno := unix.Syscall(unix.SYS_MADVISE, addr, len, unix.MADV_HUGEPAGE)
+			_, _, errno := unix.Syscall(unix.SYS_MADVISE, addr, len, madvHugepage)
 			if errno != 0 {
 				// Log this failure but continue.
 				log.Warningf("madvise(%#x, %d, MADV_HUGEPAGE) failed: %s", addr, len, errno)
@@ -997,7 +997,7 @@ func (f *MemoryFile) madviseChunkMapping(addr, len uintptr, huge bool) {
 		}
 	} else {
 		if f.opts.AdviseNoHugepage {
-			_, _, errno := unix.Syscall(unix.SYS_MADVISE, addr, len, unix.MADV_NOHUGEPAGE)
+			_, _, errno := unix.Syscall(unix.SYS_MADVISE, addr, len, madvNoHugepage)
 			if errno != 0 {
 				// Log this failure but continue.
 				log.Warningf("madvise(%#x, %d, MADV_NOHUGEPAGE) failed: %s", addr, len, errno)
@@ -1023,7 +1023,7 @@ func tryPopulateMadv(b safemem.Block) bool {
 	if b.Len() <= int(hostarch.PageSize) {
 		return true
 	}
-	_, _, errno := unix.Syscall(unix.SYS_MADVISE, b.Addr(), uintptr(b.Len()), unix.MADV_POPULATE_WRITE)
+	_, _, errno := unix.Syscall(unix.SYS_MADVISE, b.Addr(), uintptr(b.Len()), madvPopulateWrite)
 	if errno != 0 {
 		if errno == unix.EINVAL {
 			// EINVAL is expected if MADV_POPULATE_WRITE is not supported (Linux <5.14).
@@ -1131,7 +1131,7 @@ func (f *MemoryFile) Decommit(fr memmap.FileRange) {
 func (f *MemoryFile) commitFile(fr memmap.FileRange) error {
 	// "The default operation (i.e., mode is zero) of fallocate() allocates the
 	// disk space within the range specified by offset and len." - fallocate(2)
-	return unix.Fallocate(
+	return hostFallocate(
 		int(f.file.Fd()),
 		0, // mode
 		int64(fr.Start),
@@ -1142,9 +1142,9 @@ func (f *MemoryFile) decommitFile(fr memmap.FileRange) error {
 	// "After a successful call, subsequent reads from this range will
 	// return zeroes. The FALLOC_FL_PUNCH_HOLE flag must be ORed with
 	// FALLOC_FL_KEEP_SIZE in mode ..." - fallocate(2)
-	return unix.Fallocate(
+	return hostFallocate(
 		int(f.file.Fd()),
-		unix.FALLOC_FL_PUNCH_HOLE|unix.FALLOC_FL_KEEP_SIZE,
+		fallocPunchHoleKeepSize,
 		int64(fr.Start),
 		int64(fr.Length()))
 }

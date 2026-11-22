@@ -14,6 +14,8 @@
 
 package hostfd
 
+import "golang.org/x/sys/unix"
+
 // MaxReadWriteIov is the maximum permitted size of a struct iovec array in a
 // readv, writev, preadv, or pwritev host syscall.
 const MaxReadWriteIov = 1024 // UIO_MAXIOV
@@ -21,3 +23,14 @@ const MaxReadWriteIov = 1024 // UIO_MAXIOV
 // MaxSendRecvMsgIov is the maximum permitted size of a struct iovec array in a
 // sendmsg or recvmsg host syscall.
 const MaxSendRecvMsgIov = 1024 // UIO_MAXIOV
+
+const (
+	sysPread64  = unix.SYS_PREAD64
+	sysPwrite64 = unix.SYS_PWRITE64
+)
+
+func preadv2Sysno(offset int64) uintptr  { return unix.SYS_PREADV2 }
+func pwritev2Sysno(offset int64) uintptr { return unix.SYS_PWRITEV2 }
+
+// unsupportedRWFlags reports RWF_* flags the host cannot honour.
+func unsupportedRWFlags(flags uint32) bool { return false }

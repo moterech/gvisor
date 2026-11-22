@@ -91,6 +91,9 @@ func (rw *ReadWriterAt) WriteFromBlocks(srcs safemem.BlockSeq) (uint64, error) {
 //
 // Preconditions: !dsts.IsEmpty().
 func Preadv2(fd int32, dsts safemem.BlockSeq, offset int64, flags uint32) (uint64, error) {
+	if unsupportedRWFlags(flags) {
+		return 0, unix.EOPNOTSUPP
+	}
 	// No buffering is necessary regardless of safecopy; host syscalls will
 	// return EFAULT if appropriate, instead of raising SIGBUS.
 	var (
@@ -103,10 +106,10 @@ func Preadv2(fd int32, dsts safemem.BlockSeq, offset int64, flags uint32) (uint6
 		if offset == -1 {
 			n, _, e = unix.Syscall(unix.SYS_READ, uintptr(fd), dst.Addr(), uintptr(dst.Len()))
 		} else {
-			n, _, e = unix.Syscall6(unix.SYS_PREAD64, uintptr(fd), dst.Addr(), uintptr(dst.Len()), uintptr(offset), 0 /* pos_h */, 0 /* unused */)
+			n, _, e = unix.Syscall6(sysPread64, uintptr(fd), dst.Addr(), uintptr(dst.Len()), uintptr(offset), 0 /* pos_h */, 0 /* unused */)
 		}
 	} else {
-		n, e = iovecsReadWrite(unix.SYS_PREADV2, fd, safemem.IovecsFromBlockSeq(dsts), offset, flags)
+		n, e = iovecsReadWrite(preadv2Sysno(offset), fd, safemem.IovecsFromBlockSeq(dsts), offset, flags)
 		if e != 0 && n > 0 {
 			// Some bytes were read before the error. Report the partial
 			// read, as Linux does; the error will resurface on the next
@@ -128,6 +131,9 @@ func Preadv2(fd int32, dsts safemem.BlockSeq, offset int64, flags uint32) (uint6
 //
 // Preconditions: !srcs.IsEmpty().
 func Pwritev2(fd int32, srcs safemem.BlockSeq, offset int64, flags uint32) (uint64, error) {
+	if unsupportedRWFlags(flags) {
+		return 0, unix.EOPNOTSUPP
+	}
 	// No buffering is necessary regardless of safecopy; host syscalls will
 	// return EFAULT if appropriate, instead of raising SIGBUS.
 	var (
@@ -140,10 +146,10 @@ func Pwritev2(fd int32, srcs safemem.BlockSeq, offset int64, flags uint32) (uint
 		if offset == -1 {
 			n, _, e = unix.Syscall(unix.SYS_WRITE, uintptr(fd), src.Addr(), uintptr(src.Len()))
 		} else {
-			n, _, e = unix.Syscall6(unix.SYS_PWRITE64, uintptr(fd), src.Addr(), uintptr(src.Len()), uintptr(offset), 0 /* pos_h */, 0 /* unused */)
+			n, _, e = unix.Syscall6(sysPwrite64, uintptr(fd), src.Addr(), uintptr(src.Len()), uintptr(offset), 0 /* pos_h */, 0 /* unused */)
 		}
 	} else {
-		n, e = iovecsReadWrite(unix.SYS_PWRITEV2, fd, safemem.IovecsFromBlockSeq(srcs), offset, flags)
+		n, e = iovecsReadWrite(pwritev2Sysno(offset), fd, safemem.IovecsFromBlockSeq(srcs), offset, flags)
 		if e != 0 && n > 0 {
 			// Some bytes were written before the error. Report the
 			// partial write, as Linux does; the error will resurface on
